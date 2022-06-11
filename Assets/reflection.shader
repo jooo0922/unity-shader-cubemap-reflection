@@ -4,6 +4,7 @@ Shader "Custom/reflection"
     {
         _MainTex ("Albedo (RGB)", 2D) = "white" {}
         _BumpMap ("NormalMap", 2D) = "bump" {} // 노말맵 텍스쳐를 받아오는 인터페이스 생성을 위해 프로퍼티 추가
+        _MaskMap ("MaskMap", 2D) = "white" {} // 마스크맵 텍스쳐를 받아오는 인터페이스 생성을 위해 프로퍼티 추가
         _Cube ("Cubemap", Cube) = "" {} // 큐브맵 텍스쳐를 받아오는 인터페이스 생성을 위해 프로퍼티 추가
     }
     SubShader
@@ -17,12 +18,14 @@ Shader "Custom/reflection"
 
         sampler2D _MainTex;
         sampler2D _BumpMap; // 노멀맵 텍스쳐를 담는 샘플러 변수
+        sampler2D _MaskMap; // 마스크맵 텍스쳐를 담는 샘플러 변수
         samplerCUBE _Cube; // 큐브맵 텍스쳐를 담는 전용 샘플러 변수인 samplerCUBE 선언
 
         struct Input
         {
             float2 uv_MainTex;
             float2 uv_BumpMap; // 노멀맵 텍스쳐의 uv 좌표값 구조체에 정의
+            float2 uv_MaskMap; // 마스크맵 텍스쳐의 uv 좌표값 구조체에 정의
             float3 worldRefl; 
             /*
                 큐브맵 텍스쳐는 3차원 공간에 맵핑되는 텍스쳐임.
@@ -43,13 +46,26 @@ Shader "Custom/reflection"
 
         void surf (Input IN, inout SurfaceOutput o)
         {
+            // 마스크맵을 샘플링하여 물체의 원색상 (Albedo) 를 100%로 보여줄 영역과 반사광 (큐브맵 텍스쳐) 을 100%로 보여줄 영역을 구분할거임.
+            float4 m = tex2D(_MaskMap, IN.uv_MaskMap);
+
+            // Albedo 텍스쳐 (물체의 원 색상) 적용
             fixed4 c = tex2D (_MainTex, IN.uv_MainTex);
-            o.Albedo = c.rgb * 0.5;
+
+            // 포토샵에서 임의로 만든 마스크맵의 검정색 부분의 r채널은 0, 흰색 부분의 r채널은 1임. 
+            // -> 이 값을 1에서 빼줘서 뒤집었으니, 검정색 부분은 1이 되서 Albedo (물체의 원 색상)가 100% 반영되고,
+            // 흰색 부분은 0이 되서 물체의 원색상이 0%, 즉 아예 안 보이게 됨.
+            o.Albedo = c.rgb * (1 - m.r); 
 
             o.Normal = UnpackNormal(tex2D(_BumpMap, IN.uv_BumpMap)); // UnpackNormal() 로 노말맵 텍스쳐로부터 탄젠트 공간 노멀 벡터(나중에 <셰이더 코딩 입문>에서 자세히 배울 예정)를 구함.
 
+            // 큐브맵 텍스쳐 (반사광) 적용
             float4 re = texCUBE(_Cube, WorldReflectionVector(IN, o.Normal)); // 큐브맵 텍스쳐의 텍셀값을 샘플링해오는 함수 texCUBE() 사용 + WorldReflectionVector() 내장함수로 월드공간 픽셀 노멀로 변환된 노멀벡터를 적용한 반사벡터를 구함(하단 필기 참고)
-            o.Emission = re.rgb * 0.5; 
+
+            // 위에 Albedo와는 정 반대로, 마스크맵의 검정색 부분 r채널 0, 흰색 부분 r채널 1을 그대로 곱해서
+            // 검정색 부분은 큐브맵 텍스쳐 (반사광)이 0%, 즉 아예 안보이게 되고,
+            // 흰색 부분은 큐브맵 텍스쳐 (반사광)이 100% 반영될거임.
+            o.Emission = re.rgb * m.r; 
             /*
                 큐브맵 텍스쳐의 최종 텍셀값은 o.Emission 프로퍼티에 할당함.
 
